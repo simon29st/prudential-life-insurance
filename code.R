@@ -74,11 +74,8 @@ removeNAcols = function(data) {
 data = removeNAcols(data)
 task = as_task_classif(data, target = 'Response')
 
-split = partition(task, ratio = 0.6)
+split = partition(task, ratio = 0.8)
 task_train = as_task_classif(data, target = 'Response', row_ids = split$train)
-task_val_test = as_task_classif(data, target = 'Response', row_ids = split$test)
-split = partition(task_val_test, ratio = 0.5)
-task_val = as_task_classif(data, target = 'Response', row_ids = split$train)
 task_test = as_task_classif(data, target = 'Response', row_ids = split$test)
 
 
@@ -89,7 +86,32 @@ lrn_baseline$predict(task_test)$score(msr('classif.wkappa'))
 
 
 # approach (1), train a simple multi-class classifier
-learners_1 = list()
+learners_1 = list(
+  lrn('classif.glmnet', id = 'elnet_1', alpha = 0.5),
+  lrn('classif.kknn', id = 'kknn_1'),
+  #lrn('classif.multinom', id = 'multinom_1'),  # too many weights
+  lrn('classif.nnet', id = 'nnet_1'),
+  lrn('classif.xgboost', id = 'xgboost_1')
+)
+learners_1 = lapply(
+  X = learners_1,
+  FUN = function(learner) {
+    as_learner(
+      po('colapply', applicator = as.factor, affect_columns = selector_type('character')) %>>%
+      po('encode') %>>%
+      learner
+    )
+  }
+)
+
+cv7 = rsmp('cv', folds = 7)
+bg_1 = benchmark_grid(
+  task = task_train,
+  learners = learners_1,
+  resamplings = cv7
+)
+b_1 = benchmark(bg_1)
+b_1$aggregate(msr('classif.wkappa'))
 
 
 # approach (2), train a regression model, then transform value to be categorical
