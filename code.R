@@ -29,26 +29,6 @@ MSR.WKAPPA = R6::R6Class(
 )
 mlr3::mlr_measures$add('classif.wkappa', MSR.WKAPPA)
 
-# PO.REGR_TRAFO = R6::R6Class(
-#   'REGR_TRAFO',
-#   inherit = mlr3pipelines::PipeOp,
-#   public = list(
-#     initialize = function() {
-#       super$initialize(
-#         id = 'po.regr_trafo',
-#         label = 'Transform regression outputs to multi-class'
-#       )
-#     }
-#   ),
-#   private = list(
-#     .train = function(inputs) {
-#       inputs[inputs <= 1.5] = 1
-#       inputs[inputs > 1.5]
-#     },
-#     .predict = function(inputs) {}
-#   )
-# )
-
 
 data = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/train.csv')
 # remove cols with many NA vals
@@ -85,16 +65,16 @@ lrn_baseline$train(task_train)
 lrn_baseline$predict(task_test)$score(msr('classif.wkappa'))
 
 
-# approach (1), train a simple multi-class classifier
-learners_1 = list(
-  lrn('classif.glmnet', id = 'elnet_1', alpha = 0.5),
-  lrn('classif.kknn', id = 'kknn_1'),
-  #lrn('classif.multinom', id = 'multinom_1'),  # too many weights
-  lrn('classif.nnet', id = 'nnet_1'),
-  lrn('classif.xgboost', id = 'xgboost_1')
+# train simple multi-class classifier
+learners = list(
+  lrn('classif.glmnet', id = 'elnet', alpha = 0.5),
+  lrn('classif.kknn', id = 'kknn'),
+  #lrn('classif.multinom', id = 'multinom'),  # too many weights
+  lrn('classif.nnet', id = 'nnet'),
+  lrn('classif.xgboost', id = 'xgboost')
 )
-learners_1 = lapply(
-  X = learners_1,
+learners = lapply(
+  X = learners,
   FUN = function(learner) {
     as_learner(
       po('colapply', applicator = as.factor, affect_columns = selector_type('character')) %>>%
@@ -107,18 +87,8 @@ learners_1 = lapply(
 cv7 = rsmp('cv', folds = 7)
 bg_1 = benchmark_grid(
   task = task_train,
-  learners = learners_1,
+  learners = learners,
   resamplings = cv7
 )
 b_1 = benchmark(bg_1)
 b_1$aggregate(msr('classif.wkappa'))
-
-
-# approach (2), train a regression model, then transform value to be categorical
-learners_2 = list(
-  lrn('regr.glmnet', id = '2-elnet', alpha = 0.5),
-  lrn('regr.kknn', id = '2-kknn'),
-  lrn('regr.lm', id = '2-lm'),
-  lrn('regr.nnet', id = '2-nnet'),
-  lrn('regr.xgboost', id = '2-xgboost')
-)
