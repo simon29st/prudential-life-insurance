@@ -1,5 +1,7 @@
 library(mlr3verse)
 library(Metrics)
+require(tidyr)
+require(dplyr)
 
 set.seed(123)
 
@@ -52,6 +54,8 @@ removeNAcols = function(data) {
   data
 }
 data = removeNAcols(data)
+# one-hot-encode Product_Info_2 column (encoding via 'colapply' + 'encode' pipeops much slower)
+data = data %>% mutate(value = 1) %>% spread(Product_Info_2, value, fill = 0)  # cf. https://stackoverflow.com/a/52540145 
 task = as_task_classif(data, target = 'Response')
 
 split = partition(task, ratio = 0.8)
@@ -65,29 +69,19 @@ lrn_baseline$train(task_train)
 lrn_baseline$predict(task_test)$score(msr('classif.wkappa'))
 
 
-# train simple multi-class classifier
-learners = list(
-  lrn('classif.glmnet', id = 'elnet', alpha = 0.5),
+# approach (1) train simple multi-class classifier
+learners_1 = list(
+  lrn('classif.glmnet', id = 'elnet', alpha = 0.5, s = 0.01),
   lrn('classif.kknn', id = 'kknn'),
-  #lrn('classif.multinom', id = 'multinom'),  # too many weights
-  lrn('classif.nnet', id = 'nnet'),
+  lrn('classif.multinom', id = 'multinom', MaxNWts = 2000),
+  lrn('classif.nnet', id = 'nnet', MaxNWts = 2000),
   lrn('classif.xgboost', id = 'xgboost')
-)
-learners = lapply(
-  X = learners,
-  FUN = function(learner) {
-    as_learner(
-      po('colapply', applicator = as.factor, affect_columns = selector_type('character')) %>>%
-      po('encode') %>>%
-      learner
-    )
-  }
 )
 
 cv7 = rsmp('cv', folds = 7)
 bg_1 = benchmark_grid(
   task = task_train,
-  learners = learners,
+  learners = learners_1,
   resamplings = cv7
 )
 b_1 = benchmark(bg_1)
