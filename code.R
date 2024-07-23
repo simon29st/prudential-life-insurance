@@ -2,6 +2,7 @@ library(mlr3verse)
 library(Metrics)
 require(tidyr)
 require(dplyr)
+library(mlr3pipelines)
 
 set.seed(123)
 
@@ -69,7 +70,7 @@ lrn_baseline$train(task_train)
 lrn_baseline$predict(task_test)$score(msr('classif.wkappa'))
 
 
-# approach (1) train simple multi-class classifier
+# approach (1): train simple multi-class classifier on entire task
 learners_1 = list(
   lrn('classif.glmnet', id = 'elnet', alpha = 0.5, s = 0.01),
   lrn('classif.kknn', id = 'kknn'),
@@ -86,3 +87,19 @@ bg_1 = benchmark_grid(
 )
 b_1 = benchmark(bg_1)
 b_1$aggregate(msr('classif.wkappa'))
+
+
+# approach (2): perform one-vs-rest classification
+learners_2 = lapply(
+  X = learners_1,
+  FUN = function(learner) {
+    pipeline_ovr(learner)
+  }
+)
+bg_2 = benchmark_grid(
+  task = task_train,
+  learners = learners_2,
+  resamplings = cv7
+)
+b_2 = benchmark(bg_2)
+b_2$aggregate(msr('classif.wkappa'))
