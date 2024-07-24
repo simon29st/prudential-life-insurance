@@ -69,7 +69,7 @@ task_test = as_task_classif(data, target = 'Response', row_ids = split$test)
 
 
 # train a baseline random forest with 100 trees and max depth 5
-lrn_baseline = lrn('classif.ranger', num.trees = 100, max.depth = 5, id = 'rf-baseline')
+lrn_baseline = lrn('classif.ranger', num.trees = 100, max.depth = 5, id = 'rf')
 rr_baseline = resample(task_train, lrn_baseline, cv7)
 rr_baseline$aggregate(msr('classif.wkappa'))
 
@@ -134,3 +134,87 @@ bg_3 = benchmark_grid(
 )
 b_3 = benchmark(bg_3)
 b_3$aggregate(msr('classif.wkappa'))
+
+
+################################################################################
+################################################################################
+################################################################################
+
+
+# evaluation
+# train models on entire dataset and test on unseen data
+write_to_csv = function(dt, filename) {
+  dt[, 'Id'] = data_test[, 'Id']
+  dt = dt[, Response:=as.integer(response)]
+  dt[, 'truth'] = NULL
+  dt[, 'row_ids'] = NULL
+  dt[, 'response'] = NULL
+  write.csv(
+    dt,
+    paste0('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/submissions/', filename, '.csv'),
+    row.names = FALSE
+  )
+}
+
+# approaches (1), (2)
+data = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/train.csv')
+data = removeNAcols(data)
+data = one_hot_encode(data, 'Product_Info_2')
+task = as_task_classif(data, target = 'Response')
+data_test = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/test.csv')
+data_test = removeNAcols(data_test)
+data_test = one_hot_encode(data_test, 'Product_Info_2')
+
+lrn_baseline$train(task)
+res_baseline = as.data.table(lrn_baseline$predict_newdata(data_test))
+write_to_csv(res_baseline, 'baseline-1')
+
+res_1 = lapply(
+  X = learners_1,
+  FUN = function(learner) {
+    print(learner$id)
+    learner$train(task)
+    as.data.table(learner$predict_newdata(data_test))
+  }
+)
+apply(
+  matrix(c(res_1, learners_1), ncol = 2),
+  MARGIN = 1,
+  FUN = function(row) {
+    write_to_csv(row[[1]], paste0(row[[2]]$id, '-1'))
+  }
+)
+
+res_2 = lapply(
+  X = learners_2,
+  FUN = function(learner) {
+    print(learner$id)
+    learner$train(task)
+    as.data.table(learner$predict_newdata(data_test))
+  }
+)
+apply(
+  matrix(c(res_2, learners_2), ncol = 2),
+  MARGIN = 1,
+  FUN = function(row) {
+    write_to_csv(row[[1]], paste0(row[[2]]$id, '-2'))
+  }
+)
+
+
+# approach (3)
+data = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/train.csv')
+data = one_hot_encode(data, 'Product_Info_2')
+task = as_task_classif(data, target = 'Response')
+data_test = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/test.csv')
+data_test = one_hot_encode(data_test, 'Product_Info_2')
+res_3 = lapply(
+  X = learners_3,
+  FUN = function(learner) {
+    print(learner$id)
+    learner$train(task)
+    res = as.data.table(learner$predict_newdata(data_test))
+    write_to_csv(res, paste0(learner$id, '-3'))
+    res
+  }
+)
