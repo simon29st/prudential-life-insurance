@@ -5,6 +5,7 @@ require(dplyr)
 library(mlr3pipelines)
 
 set.seed(123)
+cv7 = rsmp('cv', folds = 7)
 
 
 # implement Weighted Kappa as mlr3 measure
@@ -54,9 +55,12 @@ removeNAcols = function(data) {
   )] = NULL
   data
 }
+one_hot_encode = function(data, col) {
+  # one-hot-encode Product_Info_2 column (encoding via 'colapply' + 'encode' pipeops much slower)
+  data %>% mutate(value = 1) %>% spread(col, value, fill = 0)  # cf. https://stackoverflow.com/a/52540145
+}
 data = removeNAcols(data)
-# one-hot-encode Product_Info_2 column (encoding via 'colapply' + 'encode' pipeops much slower)
-data = data %>% mutate(value = 1) %>% spread(Product_Info_2, value, fill = 0)  # cf. https://stackoverflow.com/a/52540145 
+data = one_hot_encode(data, 'Product_Info_2')
 task = as_task_classif(data, target = 'Response')
 
 split = partition(task, ratio = 0.8)
@@ -65,9 +69,9 @@ task_test = as_task_classif(data, target = 'Response', row_ids = split$test)
 
 
 # train a baseline random forest with 100 trees and max depth 5
-lrn_baseline = lrn('classif.ranger', num.trees = 100, max.depth = 5)
-lrn_baseline$train(task_train)
-lrn_baseline$predict(task_test)$score(msr('classif.wkappa'))
+lrn_baseline = lrn('classif.ranger', num.trees = 100, max.depth = 5, id = 'rf-baseline')
+rr_baseline = resample(task_train, lrn_baseline, cv7)
+rr_baseline$aggregate(msr('classif.wkappa'))
 
 
 # approach (1): train simple multi-class classifier on entire task
@@ -79,7 +83,6 @@ learners_1 = list(
   lrn('classif.xgboost', id = 'xgboost')
 )
 
-cv7 = rsmp('cv', folds = 7)
 bg_1 = benchmark_grid(
   task = task_train,
   learners = learners_1,
@@ -103,3 +106,31 @@ bg_2 = benchmark_grid(
 )
 b_2 = benchmark(bg_2)
 b_2$aggregate(msr('classif.wkappa'))
+
+
+# approach (3): histogram-impute previously removed features + re-train both sets of learners
+data = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/train.csv')
+data = one_hot_encode(data, 'Product_Info_2')
+task = as_task_classif(data, target = 'Response')
+
+split = partition(task, ratio = 0.8)
+task_train = as_task_classif(data, target = 'Response', row_ids = split$train)
+task_test = as_task_classif(data, target = 'Response', row_ids = split$test)
+
+learners_3 = c(list(lrn_baseline), learners_1, learners_2)
+learners_3 = lapply(
+  X = learners_3,
+  FUN = function(learner) {
+    as_learner(
+      po('imputehist') %>>%
+      learner
+    )
+  }
+)
+bg_3 = benchmark_grid(
+  task = task_train,
+  learners = learners_3,
+  resamplings = cv7
+)
+b_3 = benchmark(bg_3)
+b_3$aggregate(msr('classif.wkappa'))
