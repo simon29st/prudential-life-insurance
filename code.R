@@ -5,6 +5,7 @@ require(dplyr)
 library(mlr3pipelines)
 
 set.seed(123)
+cv5 = rsmp('cv', folds = 5)
 cv7 = rsmp('cv', folds = 7)
 
 
@@ -162,6 +163,87 @@ bg_22 = benchmark_grid(
 b_22 = benchmark(bg_22)
 b_22$aggregate(msr('classif.wkappa'))
 
+################################################################################
+# pre-processing (3): regression task, histogram-impute NA vals
+# approach (1): xgboost, metric transforming output to classes
+wkappa_func = function(
+    prediction,
+    cuts = c(unlist(seq(1.5, 7.5, by = 1))),
+    labels = seq(1, 8, by = 1)
+  ) {
+  cuts = c(-Inf, cuts, Inf)
+  response = cut(prediction$response, cuts, labels)
+  Metrics::ScoreQuadraticWeightedKappa(prediction$truth, response, min(labels), max(labels))
+}
+MSR.WKAPPA.REGR = R6::R6Class(
+  "WKAPPA.REGR",
+  inherit = mlr3::MeasureRegr,
+  public = list(
+    initialize = function() {
+      super$initialize(
+        id = 'regr.wkappa',
+        packages = c('Metrics'),
+        predict_type = 'response',
+        range = c(-1, 1),
+        minimize = FALSE,
+        label = 'ScoreQuadraticWeightedKappa from Metrics package'
+      )
+    }
+  ),
+  private = list(
+    .score = function(prediction, ...) {
+      wkappa_func(prediction)
+    }
+  )
+)
+mlr3::mlr_measures$add('regr.wkappa', MSR.WKAPPA.REGR)
+
+data = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/train.csv')
+data = one_hot_encode(data, 'Product_Info_2')
+task = as_task_regr(data, target = 'Response')
+
+split = partition(task)
+task_train = as_task_regr(data, target = 'Response', row_ids = split$train)
+task_test = as_task_regr(data, target = 'Response', row_ids = split$test)
+
+xgb_regr = lrn(
+  'regr.xgboost',
+  nrounds = 100,
+  max_depth = to_tune(1, 20),
+  subsample = to_tune(0.5, 1),
+  colsample_bytree = to_tune(0.5, 1),
+  min_child_weight = to_tune(10, 1000, logscale = TRUE),  # cf. https://stats.stackexchange.com/a/587618
+  eta = to_tune(0.1, 0.5, logscale = TRUE)
+)
+learner = as_learner(po('imputehist') %>>% xgb_regr, id = 'xgb_regr_imputehist')
+
+at = auto_tuner(
+  tnr('random_search'),
+  learner,
+  cv5,
+  msr('regr.wkappa'),
+  term_evals = 100
+)
+at$train(task_train)
+at$predict(task_test)$score(msr('regr.wkappa'))
+
+tuned_learner_3 = at$learner
+
+rr = resample(task_train, tuned_learner_3, cv7)
+rr$aggregate(msr('regr.wkappa'))
+
+cuts_optim = optim(
+  seq(1.5, 7.5, by = 1),
+  wkappa_func,
+  prediction = rr$prediction(),
+  control = list(fnscale = -1)  # maximise function
+)
+cuts_optim$par
+
+# evaluate with optimised cutoffs
+preds = tuned_learner_3$predict(task_test)
+wkappa_func(preds, cuts = cuts_optim$par)
+
 
 ################################################################################
 ################################################################################
@@ -246,3 +328,18 @@ res_22 = lapply(
     res
   }
 )
+
+
+################################################################################
+# pre-processing (3)
+data = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/train.csv')
+data = one_hot_encode(data, 'Product_Info_2')
+task = as_task_regr(data, target = 'Response')
+data_test = read.csv('C:/workplace/uni/ss-24/applied-ml/kaggle competition/data/test.csv')
+data_test = one_hot_encode(data_test, 'Product_Info_2')
+
+res = as.data.table(tuned_learner_3$predict_newdata(data_test))
+res_table = as.data.table(res)
+res_table$response = cut(res$response, c(-Inf, cuts_optim$par, Inf), seq(1, 8, by = 1))
+res_table
+write_to_csv(res_table, 'res-3-optim-xgb')
